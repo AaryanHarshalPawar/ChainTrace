@@ -1,4 +1,4 @@
-# Chainalytics
+# ChainTrace
 
 **Real-Time Identification of Fraud-Linked Cryptocurrency Exchanges from
 Victim-Reported Suspect Wallet Addresses**

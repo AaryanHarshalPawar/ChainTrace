@@ -125,7 +125,7 @@ class CachedHttpClient:
             self._client = httpx.AsyncClient(
                 timeout=self.timeout,
                 follow_redirects=True,
-                headers={"User-Agent": "Chainalytics/0.1 (LEA blockchain analytics)"},
+                headers={"User-Agent": "ChainTrace/0.1 (LEA blockchain analytics)"},
                 limits=httpx.Limits(max_connections=16, max_keepalive_connections=8),
             )
         return self._client

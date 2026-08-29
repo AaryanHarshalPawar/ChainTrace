@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Chainalytics",
+    title="ChainTrace",
     version="0.1.0",
     description=(
         "Real-time attribution of fraud-linked cryptocurrency wallets to the "

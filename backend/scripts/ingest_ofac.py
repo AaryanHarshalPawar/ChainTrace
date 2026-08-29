@@ -78,7 +78,7 @@ def _entity_name(entry: ElementTree.Element, ns: dict[str, str]) -> str:
 def download(url: str = SDN_URL) -> bytes:
     print(f"downloading {url} ...")
     with httpx.Client(timeout=180, follow_redirects=True) as client:
-        response = client.get(url, headers={"User-Agent": "Chainalytics/0.1"})
+        response = client.get(url, headers={"User-Agent": "ChainTrace/0.1"})
         response.raise_for_status()
     print(f"  {len(response.content):,} bytes")
     return response.content

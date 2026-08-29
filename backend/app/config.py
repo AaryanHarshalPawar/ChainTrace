@@ -17,7 +17,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "Chainalytics"
+    app_name: str = "ChainTrace"
     environment: str = "development"
 
     # --- Upstream blockchain data providers -------------------------------
