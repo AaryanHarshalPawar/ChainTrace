@@ -1,0 +1,55 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run all tests",
+      "type": "shell",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "args": ["-m", "pytest", "-q"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "group": { "kind": "test", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run tests (verbose)",
+      "type": "shell",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "args": ["-m", "pytest", "-v"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Rebuild OFAC sanctions list",
+      "type": "shell",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "args": ["scripts/ingest_ofac.py"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Warm demo cache (offline snapshot)",
+      "type": "shell",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "args": [
+        "scripts/seed_snapshot.py",
+        "TMuA6YqfCeX8EhbfYEg5y7S4DqzSJireY9"
+      ],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Install / update dependencies",
+      "type": "shell",
+      "command": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+      "args": ["-m", "pip", "install", "-r", "requirements.txt"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    }
+  ]
+}

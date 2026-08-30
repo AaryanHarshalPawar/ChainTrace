@@ -1,0 +1,46 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Everyday use. Edits to Python files restart the server automatically.
+      "name": "Run API (auto-reload)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--reload", "--port", "8000"],
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      // Use this one when you want breakpoints to actually stop.
+      // --reload runs the app in a child process, and breakpoints set in the
+      // editor often never bind to it -- which looks like "my breakpoint is
+      // being ignored" when the debugger is simply attached to the parent.
+      "name": "Debug API (breakpoints work)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--port", "8000"],
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Rebuild OFAC sanctions list",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/backend/scripts/ingest_ofac.py",
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Vet VASP labels",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/backend/scripts/vet_labels.py",
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal"
+    }
+  ]
+}

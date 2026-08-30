@@ -32,7 +32,14 @@ dist/
 .vite/
 
 # Editors / OS
-.vscode/
+# The shared VS Code config IS committed on purpose: it pins the interpreter,
+# wires up the test runner, and gives everyone the same Run buttons. Only
+# machine-specific state is ignored.
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
 .idea/
 .DS_Store
 Thumbs.db

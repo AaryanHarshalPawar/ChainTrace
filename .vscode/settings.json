@@ -1,0 +1,36 @@
+{
+  // Point VS Code at the project's own Python, not whatever is on PATH.
+  // The system `python` here is MSYS2's, which has no project dependencies
+  // installed and would make every import look broken.
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/Scripts/python.exe",
+  "python.terminal.activateEnvironment": true,
+
+  // Tests live under backend/, and pytest.ini is there too, so the test
+  // runner has to start from that directory or it finds nothing.
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["tests"],
+  "python.testing.cwd": "${workspaceFolder}/backend",
+
+  // Lets Pylance resolve `from app.core...` imports from the repo root.
+  "python.analysis.extraPaths": ["${workspaceFolder}/backend"],
+  "python.analysis.typeCheckingMode": "basic",
+
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/*.pyc": true
+  },
+  "search.exclude": {
+    "**/.venv": true,
+    "**/data/cache.sqlite3*": true,
+    "**/data/labels/ofac_sanctions.json": true
+  },
+
+  "[python]": {
+    "editor.rulers": [88],
+    "editor.tabSize": 4
+  },
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true
+}

@@ -1,0 +1,73 @@
+# ChainTrace API — clickable requests.
+#
+# Needs the "REST Client" extension (humao.rest-client). VS Code will offer to
+# install it from .vscode/extensions.json.
+#
+# Start the server first (F5 → "Run API"), then click the small "Send Request"
+# link that appears above each ### block.
+
+@baseUrl = http://localhost:8000/api/v1
+
+
+### 1. Health — is the system up, and what data is loaded?
+GET {{baseUrl}}/health
+
+
+### 2. Which chains can this deployment trace?
+GET {{baseUrl}}/chains
+
+
+### 3. Validate a GOOD address (USDT-TRC20 contract)
+GET {{baseUrl}}/validate?address=TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
+
+
+### 4. Validate a MISTYPED address — last character changed.
+# Should be rejected with "base58 checksum fails". This is the check that
+# catches a wallet transcribed wrongly from a complaint form.
+GET {{baseUrl}}/validate?address=TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6X
+
+
+### 5. Screen a REAL OFAC-sanctioned address
+# Returns Bank Markazi Jomhouri Islami Iran, programs IRAN/IFSR/IRGC/SDGT.
+# Instant, no network needed — safe to run on every complaint at intake.
+GET {{baseUrl}}/screen?address=TNiq9AXBp9EjUqhDhrwrfvAA8U3GUQZH81
+
+
+### 6. Screen a clean address — expect no hits
+GET {{baseUrl}}/screen?address=TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
+
+
+### 7. FULL TRACE — the main event
+# Follows the money, attributes it to a VASP, scores risk, and returns
+# ranked officer actions. Look for `deposit_address` and `taint_ratio`
+# in each attribution.
+POST {{baseUrl}}/trace
+Content-Type: application/json
+
+{
+  "address": "TMuA6YqfCeX8EhbfYEg5y7S4DqzSJireY9",
+  "complaint_id": "NCRP-DEMO-0001",
+  "max_hops": 2,
+  "max_nodes": 12
+}
+
+
+### 8. Trace the sanctioned wallet
+# Terminates immediately at hop 0 — a sanctioned entity is asked, not followed.
+POST {{baseUrl}}/trace
+Content-Type: application/json
+
+{
+  "address": "TNiq9AXBp9EjUqhDhrwrfvAA8U3GUQZH81",
+  "complaint_id": "NCRP-DEMO-0002",
+  "max_hops": 2
+}
+
+
+### 9. Deliberately bad input — expect HTTP 422 with a readable reason
+POST {{baseUrl}}/trace
+Content-Type: application/json
+
+{
+  "address": "this is not a wallet address"
+}
