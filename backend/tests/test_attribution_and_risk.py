@@ -353,3 +353,130 @@ def test_truncated_trace_recommends_rerun():
     )
     actions = recommend(result, assess(result))
     assert any("Re-run" in a.action for a in actions)
+
+
+# --------------------------------------------------------------------------
+# Taint ratio and deposit timing
+# --------------------------------------------------------------------------
+
+
+def test_taint_is_carried_onto_the_attribution(labels):
+    """A path carrying 40% of the money must report 40%, not 100%."""
+    engine = AttributionEngine(labels)
+    transfers = [
+        transfer(VICTIM_PAID, DEPOSIT, "4000"),
+        transfer(DEPOSIT, HOT_WALLET, "4000"),
+    ]
+    assessment = engine.assess(
+        address=DEPOSIT, chain=Chain.TRON, depth=2,
+        profile=profile(), transfers=transfers,
+        value_in_usd=Decimal(4000), taint_ratio=0.4,
+    )
+    assert assessment.attribution.taint_ratio == pytest.approx(0.4)
+
+
+def test_taint_never_exceeds_one(labels):
+    """Even a nonsensical input cannot report more than all of the money."""
+    engine = AttributionEngine(labels)
+    assessment = engine.assess(
+        address=DEPOSIT, chain=Chain.TRON, depth=1,
+        profile=profile(),
+        transfers=[transfer(DEPOSIT, HOT_WALLET, "100")],
+        taint_ratio=1.8,
+    )
+    assert assessment.attribution.taint_ratio == 1.0
+
+
+def test_taint_sums_across_converging_paths():
+    """Two routes to one exchange carrying 30% and 40% means 70% arrived."""
+    def hit(hops: int, taint: float) -> Attribution:
+        return Attribution(
+            vasp_name="Same", category=VaspCategory.EXCHANGE, chain=Chain.TRON,
+            matched_address="x", method=AttributionMethod.DIRECT_LABEL,
+            confidence=0.8, hops_from_subject=hops, taint_ratio=taint,
+        )
+
+    ranked = rank_attributions([hit(2, 0.3), hit(3, 0.4)])
+    assert len(ranked) == 1
+    assert ranked[0].taint_ratio == pytest.approx(0.7)
+
+
+def test_merged_taint_is_capped_at_one():
+    def hit(taint: float) -> Attribution:
+        return Attribution(
+            vasp_name="Same", category=VaspCategory.EXCHANGE, chain=Chain.TRON,
+            matched_address="x", method=AttributionMethod.DIRECT_LABEL,
+            confidence=0.8, hops_from_subject=1, taint_ratio=taint,
+        )
+
+    assert rank_attributions([hit(0.7), hit(0.6)])[0].taint_ratio == 1.0
+
+
+def test_deposit_timestamp_comes_from_the_sweep_not_the_arrival(labels):
+    """The deposit event is when funds entered the exchange, not this wallet.
+
+    An investigator asks "is the freeze window still open?", which is answered
+    by when the money reached the VASP -- not by when it reached the deposit
+    address one step earlier.
+    """
+    engine = AttributionEngine(labels)
+    arrival = datetime(2026, 1, 1, 9, 0, tzinfo=UTC)
+    sweep = Transfer(
+        chain=Chain.TRON, tx_hash="sweep", block_time=datetime(2026, 1, 3, 14, 32, tzinfo=UTC),
+        from_address=DEPOSIT, to_address=HOT_WALLET, asset_symbol="USDT",
+        asset_contract=USDT, amount=Decimal(5000), amount_usd=Decimal(5000),
+    )
+    assessment = engine.assess(
+        address=DEPOSIT, chain=Chain.TRON, depth=1,
+        profile=profile(),
+        transfers=[transfer(VICTIM_PAID, DEPOSIT, "5000"), sweep],
+        arrived_at=arrival,
+    )
+    attribution = assessment.attribution
+    assert attribution.last_deposit_at == datetime(2026, 1, 3, 14, 32, tzinfo=UTC)
+    assert attribution.last_deposit_at != arrival
+
+
+def test_direct_label_uses_arrival_time(labels):
+    """With no sweep to measure, the arrival at the labelled address is it."""
+    engine = AttributionEngine(labels)
+    arrival = datetime(2026, 2, 5, 11, 15, tzinfo=UTC)
+    assessment = engine.assess(
+        address=HOT_WALLET, chain=Chain.TRON, depth=1,
+        profile=profile(address=HOT_WALLET), transfers=[], arrived_at=arrival,
+    )
+    assert assessment.attribution.first_deposit_at == arrival
+    assert assessment.attribution.last_deposit_at == arrival
+
+
+def test_merged_timestamps_span_first_to_last():
+    def hit(when: datetime) -> Attribution:
+        return Attribution(
+            vasp_name="Same", category=VaspCategory.EXCHANGE, chain=Chain.TRON,
+            matched_address="x", method=AttributionMethod.DIRECT_LABEL,
+            confidence=0.9, hops_from_subject=1,
+            first_deposit_at=when, last_deposit_at=when,
+        )
+
+    early = datetime(2026, 1, 1, tzinfo=UTC)
+    late = datetime(2026, 3, 1, tzinfo=UTC)
+    merged = rank_attributions([hit(late), hit(early)])[0]
+    assert merged.first_deposit_at == early
+    assert merged.last_deposit_at == late
+
+
+def test_subject_as_labelled_entity_has_no_deposit_time(labels):
+    """Nothing was deposited into the subject along a traced path."""
+    store = LabelStore()
+    store._add(
+        VaspRecord(
+            address=VICTIM_PAID, chain=Chain.TRON, name="SDN", 
+            category=VaspCategory.SANCTIONED, source="OFAC SDN", confidence=1.0,
+        )
+    )
+    assessment = AttributionEngine(store).assess(
+        address=VICTIM_PAID, chain=Chain.TRON, depth=0,
+        profile=profile(address=VICTIM_PAID), transfers=[],
+    )
+    assert assessment.attribution.first_deposit_at is None
+    assert assessment.attribution.last_deposit_at is None

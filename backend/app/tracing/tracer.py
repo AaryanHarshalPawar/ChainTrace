@@ -28,6 +28,7 @@ import asyncio
 import logging
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -49,6 +50,27 @@ from app.core.models import (
 )
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class _Pending:
+    """One address queued for exploration, with what the path carried to it.
+
+    This began as a tuple and grew a field each time the report needed more
+    provenance. A dataclass keeps the merge logic below honest -- silently
+    mismatching a positional element there would corrupt value attribution
+    across the whole graph.
+    """
+
+    address: str
+    depth: int
+    traced_value_usd: Decimal
+    evidence_tx_hashes: list[str]
+    # Share of the subject's outflow that followed this path here.
+    taint_ratio: float = 1.0
+    # When value most recently arrived, from the edge that led here.
+    arrived_at: datetime | None = None
+
 
 # How many downstream branches to follow from any one address. Fraud wallets
 # fan out deliberately to exhaust an investigator's budget; following the
@@ -94,10 +116,9 @@ class Tracer:
         stats = TraceStats()
 
         visited: set[str] = set()
-        # (address, depth, traced_value_usd, inbound_tx_hashes)
-        frontier: list[tuple[str, int, Decimal, list[str]]] = [
-            (address, 0, Decimal(0), [])
-        ]
+        # The subject carries the whole taint by definition: 100% of the money
+        # that left the reported address is, trivially, at the reported address.
+        frontier: list[_Pending] = [_Pending(address, 0, Decimal(0), [])]
 
         while frontier:
             if len(visited) >= self.max_nodes:
@@ -116,19 +137,29 @@ class Tracer:
             # fetched twice, double-counted in the stats, and would burn twice
             # the rate-limit budget. Traced value sums across those paths,
             # which is exactly what the haircut model intends.
-            pending: dict[str, tuple[str, int, Decimal, list[str]]] = {}
-            for node_address, depth, value, evidence in frontier:
-                if node_address in visited:
+            pending: dict[str, _Pending] = {}
+            for item in frontier:
+                if item.address in visited:
                     continue
-                previous = pending.get(node_address)
+                previous = pending.get(item.address)
                 if previous is None:
-                    pending[node_address] = (node_address, depth, value, evidence)
+                    pending[item.address] = item
                 else:
-                    pending[node_address] = (
-                        node_address,
-                        min(previous[1], depth),
-                        previous[2] + value,
-                        list(dict.fromkeys(previous[3] + evidence))[:10],
+                    pending[item.address] = _Pending(
+                        address=item.address,
+                        depth=min(previous.depth, item.depth),
+                        traced_value_usd=previous.traced_value_usd + item.traced_value_usd,
+                        evidence_tx_hashes=list(
+                            dict.fromkeys(
+                                previous.evidence_tx_hashes + item.evidence_tx_hashes
+                            )
+                        )[:10],
+                        taint_ratio=min(1.0, previous.taint_ratio + item.taint_ratio),
+                        arrived_at=(
+                            max(t for t in (previous.arrived_at, item.arrived_at) if t)
+                            if (previous.arrived_at or item.arrived_at)
+                            else None
+                        ),
                     )
             level = list(pending.values())
             frontier = []
@@ -137,17 +168,17 @@ class Tracer:
 
             # Highest-value branches first, so a truncated trace still
             # captured the money that matters.
-            level.sort(key=lambda item: item[2], reverse=True)
+            level.sort(key=lambda item: item.traced_value_usd, reverse=True)
             level = level[: self.max_nodes - len(visited)]
             for item in level:
-                visited.add(item[0])
+                visited.add(item.address)
 
             semaphore = asyncio.Semaphore(LEVEL_CONCURRENCY)
 
             async def explore(
-                item: tuple[str, int, Decimal, list[str]],
+                item: _Pending,
             ) -> tuple[
-                tuple[str, int, Decimal, list[str]],
+                _Pending,
                 tuple[NodeAssessment, FilterOutcome, AddressProfile] | None,
             ]:
                 async with semaphore:
@@ -157,7 +188,9 @@ class Tracer:
                 *(explore(item) for item in level), return_exceptions=False
             )
 
-            for (node_address, depth, traced_value, evidence), visit in results:
+            for item, visit in results:
+                node_address, depth = item.address, item.depth
+                traced_value = item.traced_value_usd
                 if visit is None:
                     # The address stays in the graph, explicitly marked as
                     # unexamined. Dropping it would render a rate-limit gap
@@ -168,6 +201,8 @@ class Tracer:
                         depth=depth,
                         role=NodeRole.SUBJECT if depth == 0 else NodeRole.TERMINAL,
                         value_in_usd=traced_value,
+                        taint_ratio=round(min(1.0, item.taint_ratio), 6),
+                        arrived_at=item.arrived_at,
                         stop_reason=(
                             "could not be examined: upstream data unavailable. "
                             "This is a gap in the search, not a dead end -- "
@@ -179,7 +214,7 @@ class Tracer:
                 assessment, outcome, profile = visit
 
                 node = self._build_node(
-                    node_address, chain, depth, assessment, traced_value, profile
+                    node_address, chain, depth, assessment, item, profile
                 )
                 nodes[node_address] = node
                 if assessment.attribution is not None:
@@ -207,8 +242,8 @@ class Tracer:
                     stats.truncated = True
                     continue
 
-                for edge, next_value, edge_hashes in self._outgoing(
-                    node_address, chain, outcome.kept, traced_value
+                for edge, child in self._outgoing(
+                    node_address, chain, outcome.kept, item
                 ):
                     key = (edge.source, edge.target, edge.asset_symbol)
                     if key in edges:
@@ -217,7 +252,7 @@ class Tracer:
                         edges[key] = edge
                         stats.edges_discovered += 1
                     if edge.target not in visited:
-                        frontier.append((edge.target, depth + 1, next_value, edge_hashes))
+                        frontier.append(child)
 
         stats.elapsed_seconds = round(time.monotonic() - started, 2)
         stats.upstream_calls = getattr(adapter.http, "upstream_calls", 0)
@@ -254,7 +289,8 @@ class Tracer:
         stats: TraceStats,
         warnings: list[str],
     ) -> tuple[NodeAssessment, FilterOutcome, AddressProfile] | None:
-        node_address, depth, traced_value, evidence = item
+        node_address, depth = item.address, item.depth
+        traced_value = item.traced_value_usd
         try:
             transfers = await adapter.fetch_transfers(
                 node_address, limit=self.transfers_per_address
@@ -285,7 +321,9 @@ class Tracer:
             value_in_usd=(
                 profile.total_received_usd if depth == 0 else traced_value
             ),
-            evidence_tx_hashes=evidence,
+            evidence_tx_hashes=item.evidence_tx_hashes,
+            taint_ratio=item.taint_ratio,
+            arrived_at=item.arrived_at,
         )
         return assessment, outcome, profile
 
@@ -295,7 +333,7 @@ class Tracer:
         chain: Chain,
         depth: int,
         assessment: NodeAssessment,
-        traced_value: Decimal,
+        item: _Pending,
         profile: AddressProfile,
     ) -> TraceNode:
         return TraceNode(
@@ -309,8 +347,12 @@ class Tracer:
             # trace begins -- so show what it actually received instead of a
             # meaningless zero.
             value_in_usd=(
-                profile.total_received_usd if depth == 0 else traced_value
+                profile.total_received_usd
+                if depth == 0
+                else item.traced_value_usd
             ),
+            taint_ratio=round(min(1.0, item.taint_ratio), 6),
+            arrived_at=item.arrived_at,
             profile=profile,
             risk_score=0.0,
         )
@@ -320,9 +362,14 @@ class Tracer:
         address: str,
         chain: Chain,
         transfers: list[Transfer],
-        traced_value: Decimal,
-    ) -> list[tuple[TraceEdge, Decimal, list[str]]]:
-        """Aggregate outbound transfers into edges and haircut the value."""
+        parent: _Pending,
+    ) -> list[tuple[TraceEdge, _Pending]]:
+        """Aggregate outbound transfers into edges and haircut the value.
+
+        Returns each edge with the queue entry for its target, carrying the
+        haircut value, the taint share, and the time value last moved along
+        that edge.
+        """
         subject = address.lower()
         outbound = [t for t in transfers if t.from_address.lower() == subject]
         if not outbound:
@@ -338,9 +385,11 @@ class Tracer:
         # At depth 0 nothing has been traced in yet, so the observed outbound
         # total *is* the traced value -- that is the money the victim's funds
         # became. Deeper nodes carry a haircut share down from their parent.
-        basis = traced_value if traced_value > 0 else total_out
+        basis = (
+            parent.traced_value_usd if parent.traced_value_usd > 0 else total_out
+        )
 
-        results: list[tuple[TraceEdge, Decimal, list[str]]] = []
+        results: list[tuple[TraceEdge, _Pending]] = []
         for (target, symbol), group in grouped.items():
             amount = sum((t.amount for t in group), Decimal(0))
             usd = sum((t.amount_usd or Decimal(0) for t in group), Decimal(0))
@@ -363,9 +412,23 @@ class Tracer:
                 last_seen=max(times) if times else None,
                 tx_hashes=hashes[:10],
             )
-            results.append((edge, basis * Decimal(str(share)), hashes[:5]))
+            results.append(
+                (
+                    edge,
+                    _Pending(
+                        address=target,
+                        depth=parent.depth + 1,
+                        traced_value_usd=basis * Decimal(str(share)),
+                        evidence_tx_hashes=hashes[:5],
+                        # Taint compounds multiplicatively down the chain: half
+                        # of a half is a quarter of the original money.
+                        taint_ratio=parent.taint_ratio * share,
+                        arrived_at=edge.last_seen,
+                    ),
+                )
+            )
 
-        results.sort(key=lambda item: item[1], reverse=True)
+        results.sort(key=lambda item: item[1].traced_value_usd, reverse=True)
         return results[:MAX_BRANCHES_PER_NODE]
 
     @staticmethod

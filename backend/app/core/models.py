@@ -163,6 +163,21 @@ class Attribution(BaseModel):
     hops_from_subject: int
     # Value that actually reached this VASP along the traced paths.
     value_usd: Decimal = Decimal(0)
+    # Share of the value leaving the reported address that reached this VASP,
+    # following the traced paths. 1.0 means everything; 0.68 means 68%.
+    #
+    # Defined precisely because an undefined "taint %" is indefensible under
+    # challenge: it is the product of each hop's haircut share along the path,
+    # summed where several paths converge on the same VASP. It therefore
+    # answers exactly one question -- "how much of the victim-linked money
+    # ended up here" -- and can never exceed 1.0.
+    taint_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    # When the money actually landed at the VASP. `last_deposit_at` is the
+    # decision-relevant one: it answers whether the freeze window is still
+    # open. Both are None when the subject address is itself the labelled
+    # entity, since nothing was deposited *into* it along a traced path.
+    first_deposit_at: datetime | None = None
+    last_deposit_at: datetime | None = None
     asset_breakdown: dict[str, Decimal] = Field(default_factory=dict)
     evidence_tx_hashes: list[str] = Field(default_factory=list)
     reasoning: list[str] = Field(default_factory=list)
@@ -200,6 +215,12 @@ class TraceNode(BaseModel):
     category: VaspCategory = VaspCategory.UNKNOWN
     value_in_usd: Decimal = Decimal(0)
     value_out_usd: Decimal = Decimal(0)
+    # Share of the subject's outflow that reached this node. Lets the graph
+    # view weight edges and nodes by how much of the victim's money they
+    # actually carried, rather than by raw balance.
+    taint_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    # When value most recently arrived here along a traced path.
+    arrived_at: datetime | None = None
     profile: AddressProfile | None = None
     risk_score: float = 0.0
     # Set when the tracer stopped here for a reason other than "no outflow".

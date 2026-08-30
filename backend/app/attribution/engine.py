@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 
 from app.attribution.behaviour import BehaviourClass, BehaviourVerdict, classify
@@ -53,6 +54,40 @@ TERMINAL_CATEGORIES = frozenset(
         VaspCategory.MIXER,
     }
 )
+
+
+@dataclass(frozen=True)
+class _DepositTiming:
+    """When value reached a VASP along the traced path."""
+
+    first: datetime | None = None
+    last: datetime | None = None
+
+
+def _sweep_timing(
+    address: str, destination: str | None, transfers: list[Transfer]
+) -> _DepositTiming | None:
+    """Timestamps of the sweep from a deposit address into its exchange.
+
+    This is the deposit event an investigator cares about: the instant the
+    money stopped being on the open chain and became a balance inside a
+    regulated company. ``last`` is the one that decides whether the freeze
+    window is still open.
+    """
+    if not destination:
+        return None
+    subject = address.lower()
+    target = destination.lower()
+    times = [
+        transfer.block_time
+        for transfer in transfers
+        if transfer.from_address.lower() == subject
+        and transfer.to_address.lower() == target
+        and transfer.block_time
+    ]
+    if not times:
+        return None
+    return _DepositTiming(first=min(times), last=max(times))
 
 
 @dataclass
@@ -87,6 +122,8 @@ class AttributionEngine:
         transfers: list[Transfer],
         value_in_usd: Decimal = Decimal(0),
         evidence_tx_hashes: list[str] | None = None,
+        taint_ratio: float = 1.0,
+        arrived_at: datetime | None = None,
     ) -> NodeAssessment:
         behaviour = classify(profile, transfers)
         record = self.labels.lookup(chain, address)
@@ -97,16 +134,27 @@ class AttributionEngine:
             behaviour=behaviour,
             record=record,
         )
+        timing = _DepositTiming(first=arrived_at, last=arrived_at)
 
         if record is not None:
-            self._apply_direct_label(assessment, record, value_in_usd, evidence_tx_hashes)
+            self._apply_direct_label(
+                assessment, record, value_in_usd, evidence_tx_hashes, taint_ratio, timing
+            )
         elif behaviour.behaviour is BehaviourClass.DEPOSIT_ADDRESS:
+            # For a sweep, the moment that matters is when the funds left this
+            # address *into the exchange*, not when they arrived here.
             self._apply_deposit_heuristic(
-                assessment, behaviour, chain, value_in_usd, evidence_tx_hashes
+                assessment,
+                behaviour,
+                chain,
+                value_in_usd,
+                evidence_tx_hashes,
+                taint_ratio,
+                _sweep_timing(address, behaviour.forwards_to, transfers) or timing,
             )
         elif behaviour.behaviour is BehaviourClass.EXCHANGE_LIKE:
             self._apply_behavioural_inference(
-                assessment, behaviour, value_in_usd, evidence_tx_hashes
+                assessment, behaviour, value_in_usd, evidence_tx_hashes, taint_ratio, timing
             )
         else:
             assessment.role = self._role_for_behaviour(behaviour.behaviour)
@@ -124,6 +172,8 @@ class AttributionEngine:
         record: VaspRecord,
         value_in_usd: Decimal,
         evidence: list[str] | None,
+        taint_ratio: float,
+        timing: _DepositTiming,
     ) -> None:
         assessment.category = record.category
         assessment.label = record.name
@@ -150,6 +200,9 @@ class AttributionEngine:
             confidence=record.confidence,
             hops_from_subject=assessment.depth,
             value_usd=value_in_usd,
+            taint_ratio=round(min(1.0, taint_ratio), 6),
+            first_deposit_at=timing.first,
+            last_deposit_at=timing.last,
             evidence_tx_hashes=list(evidence or []),
             reasoning=[
                 f"address is a known {record.category.value} address of "
@@ -170,6 +223,8 @@ class AttributionEngine:
         chain: Chain,
         value_in_usd: Decimal,
         evidence: list[str] | None,
+        taint_ratio: float,
+        timing: _DepositTiming,
     ) -> None:
         """A sweep into a known VASP makes this address a customer deposit."""
         destination = behaviour.forwards_to
@@ -190,6 +245,9 @@ class AttributionEngine:
                 confidence=round(behaviour.confidence * 0.7, 3),
                 hops_from_subject=assessment.depth,
                 value_usd=value_in_usd,
+                taint_ratio=round(min(1.0, taint_ratio), 6),
+                first_deposit_at=timing.first,
+                last_deposit_at=timing.last,
                 evidence_tx_hashes=list(evidence or []),
                 reasoning=behaviour.reasoning
                 + [
@@ -219,6 +277,9 @@ class AttributionEngine:
             confidence=round(behaviour.confidence * upstream.confidence, 3),
             hops_from_subject=assessment.depth,
             value_usd=value_in_usd,
+            taint_ratio=round(min(1.0, taint_ratio), 6),
+            first_deposit_at=timing.first,
+            last_deposit_at=timing.last,
             evidence_tx_hashes=list(evidence or []),
             reasoning=behaviour.reasoning
             + [
@@ -241,6 +302,8 @@ class AttributionEngine:
         behaviour: BehaviourVerdict,
         value_in_usd: Decimal,
         evidence: list[str] | None,
+        taint_ratio: float,
+        timing: _DepositTiming,
     ) -> None:
         assessment.role = NodeRole.VASP_HOT
         assessment.category = VaspCategory.EXCHANGE
@@ -259,6 +322,9 @@ class AttributionEngine:
             confidence=round(behaviour.confidence * 0.8, 3),
             hops_from_subject=assessment.depth,
             value_usd=value_in_usd,
+            taint_ratio=round(min(1.0, taint_ratio), 6),
+            first_deposit_at=timing.first,
+            last_deposit_at=timing.last,
             evidence_tx_hashes=list(evidence or []),
             reasoning=behaviour.reasoning
             + [
@@ -277,6 +343,14 @@ class AttributionEngine:
             BehaviourClass.TERMINAL_HOLDER: NodeRole.TERMINAL,
             BehaviourClass.LOW_ACTIVITY: NodeRole.TERMINAL,
         }.get(behaviour, NodeRole.INTERMEDIARY)
+
+
+def _earliest(a: datetime | None, b: datetime | None) -> datetime | None:
+    return min(x for x in (a, b) if x is not None) if (a or b) else None
+
+
+def _latest(a: datetime | None, b: datetime | None) -> datetime | None:
+    return max(x for x in (a, b) if x is not None) if (a or b) else None
 
 
 def rank_attributions(attributions: list[Attribution]) -> list[Attribution]:
@@ -306,6 +380,18 @@ def rank_attributions(attributions: list[Attribution]) -> list[Attribution]:
         )
         combined = best.model_copy(deep=True)
         combined.value_usd = existing.value_usd + attribution.value_usd
+        # Taint sums across converging paths -- two routes carrying 30% and
+        # 40% of the subject's outflow to one exchange means 70% reached it.
+        # Capped at 1.0, since no more than all of the money can arrive.
+        combined.taint_ratio = round(
+            min(1.0, existing.taint_ratio + attribution.taint_ratio), 6
+        )
+        combined.first_deposit_at = _earliest(
+            existing.first_deposit_at, attribution.first_deposit_at
+        )
+        combined.last_deposit_at = _latest(
+            existing.last_deposit_at, attribution.last_deposit_at
+        )
         merged[key] = combined
 
     for key, attribution in merged.items():
