@@ -1,0 +1,115 @@
+/* ChainTrace — design tokens and base styles.
+ *
+ * Light institutional: this is a tool an officer is issued, not a crypto
+ * product. Restrained palette, strong typographic hierarchy, monospace for
+ * anything an investigator might copy into a legal notice.
+ *
+ * Semantic risk colours are deliberately separate from the accent, so "this
+ * is interactive" never reads as "this is dangerous".
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@600;700&display=swap");
+
+:root {
+  --bg: #eef1f1;
+  --surface: #ffffff;
+  --surface-2: #e3e9e9;
+  --ink: #111a1c;
+  --ink-2: #3b4b4e;
+  --muted: #5f7174;
+  --line: #d1dada;
+  --line-strong: #b3c1c2;
+
+  --accent: #0b6a75;
+  --accent-ink: #06454d;
+  --accent-soft: #dcecee;
+
+  /* Risk bands. Fixed meanings — never reused for decoration. */
+  --critical: #a11f17;
+  --critical-soft: #fae3e1;
+  --high: #b0560a;
+  --high-soft: #fbe9d8;
+  --medium: #78600a;
+  --medium-soft: #f8f0d4;
+  --low: #1a6446;
+  --low-soft: #ddf0e6;
+
+  --radius: 6px;
+  --shadow: 0 1px 2px rgba(17, 26, 28, 0.05), 0 6px 20px -10px rgba(17, 26, 28, 0.18);
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", monospace;
+  --font-serif: "IBM Plex Serif", Georgia, serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+input {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Uppercase micro-labels used above every data group. */
+.label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.pill {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
