@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from app.attribution.engine import AttributionEngine
 from app.attribution.labels import LabelStore, get_label_store
 from app.chains.base import ChainAdapter
+from app.chains.bitcoin import BitcoinAdapter
 from app.chains.http import CachedHttpClient
 from app.chains.tron import TronAdapter
 from app.core.chains import Chain, DetectionResult, detect
@@ -47,6 +48,7 @@ class TraceService:
         self.engine = AttributionEngine(self.labels)
         self.adapters: dict[Chain, ChainAdapter] = {
             Chain.TRON: TronAdapter(self.http, self.oracle),
+            Chain.BITCOIN: BitcoinAdapter(self.http, self.oracle),
         }
 
     async def startup(self) -> None:

@@ -58,12 +58,12 @@ class HostRateLimiter:
     KEYED_INTERVALS = {
         "api.trongrid.io": 0.25,
         "api.etherscan.io": 0.25,
-        "mempool.space": 0.12,
+        "mempool.space": 0.5,
     }
     KEYLESS_INTERVALS = {
         "api.trongrid.io": 1.0,
         "api.etherscan.io": 0.35,
-        "mempool.space": 0.12,
+        "mempool.space": 0.5,
     }
     MAX_INTERVAL = 5.0
 
