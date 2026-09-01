@@ -9,9 +9,14 @@ metadata) so it can be adapted without reshaping the service underneath.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+from collections.abc import AsyncIterator
+from typing import cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -21,6 +26,11 @@ from app.service import TraceService, UnsupportedAddress
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _sse(payload: object) -> str:
+    """One server-sent event frame. The blank line terminates the event."""
+    return "data: " + json.dumps(payload, default=str) + "\n\n"
 
 
 def _service(request: Request) -> TraceService:
@@ -143,6 +153,73 @@ async def trace(request: Request, payload: TraceRequest) -> TraceResponse:
         raise HTTPException(400, str(exc)) from exc
 
     return TraceResponse(complaint_id=payload.complaint_id, result=result)
+
+
+@router.post("/trace/stream", summary="Trace, streaming progress as it works")
+async def trace_stream(request: Request, payload: TraceRequest) -> StreamingResponse:
+    """Server-sent events: progress while the trace runs, then the result.
+
+    A cold Bitcoin trace takes tens of seconds, and a spinner cannot tell an
+    investigator whether the search is progressing or has hung. These events
+    are emitted by the tracer itself as it works -- each ``hop`` marks a real
+    BFS level and each ``node`` a real address examined -- so what is shown is
+    the actual state of the search, not an animation timed to look busy.
+    """
+    service = _service(request)
+    queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
+
+    async def on_progress(event: dict) -> None:
+        await queue.put(("progress", event))
+
+    async def run() -> None:
+        try:
+            result = await service.trace(
+                payload.address,
+                max_hops=payload.max_hops,
+                max_nodes=payload.max_nodes,
+                on_progress=on_progress,
+            )
+            await queue.put(("done", result))
+        except UnsupportedAddress as exc:
+            await queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001 - must reach the client as an event
+            log.exception("streaming trace failed")
+            await queue.put(("error", f"{type(exc).__name__}: {exc}"))
+
+    async def events() -> AsyncIterator[str]:
+        task = asyncio.create_task(run())
+        try:
+            while True:
+                kind, payload_out = await queue.get()
+                if kind == "progress":
+                    yield _sse(payload_out)
+                elif kind == "done":
+                    result = cast(TraceResult, payload_out)
+                    yield _sse(
+                        {
+                            "type": "done",
+                            "complaint_id": payload.complaint_id,
+                            "result": result.model_dump(mode="json"),
+                        }
+                    )
+                    return
+                else:
+                    yield _sse({"type": "error", "message": payload_out})
+                    return
+        finally:
+            # A client that navigates away mid-trace must not leave the search
+            # running against a rate-limited upstream.
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # stop proxies buffering the stream
+        },
+    )
 
 
 @router.get("/screen", summary="Sanctions and label screening, no tracing")

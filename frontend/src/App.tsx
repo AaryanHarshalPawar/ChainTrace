@@ -8,10 +8,17 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, api, type HealthResponse, type TraceResult } from "./api/client";
+import {
+  ApiError,
+  api,
+  type HealthResponse,
+  type ProgressEvent,
+  type TraceResult,
+} from "./api/client";
 import { FlowGraph } from "./components/FlowGraph";
 import { Report } from "./components/Report";
 import { NodeInspector } from "./components/Panels";
+import { TraceProgress } from "./components/TraceProgress";
 
 // Chosen by tracing candidates and keeping the ones that actually produce a
 // finding worth reading. Each shows a different outcome, so a demo can move
@@ -59,6 +66,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [maxHops, setMaxHops] = useState(3);
+  const [progress, setProgress] = useState<ProgressEvent[]>([]);
+  const [tracing, setTracing] = useState("");
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => setHealth(null));
@@ -71,10 +80,16 @@ export default function App() {
     setError(null);
     setResult(null);
     setSelected(null);
+    setProgress([]);
+    setTracing(value);
     try {
-      const response = await api.trace(value, { maxHops, maxNodes: 40 });
-      setResult(response.result);
-      setSelected(response.result.nodes?.[0]?.address ?? null);
+      const traced = await api.traceStream(
+        value,
+        { maxHops, maxNodes: 40 },
+        (event) => setProgress((prev) => [...prev, event]),
+      );
+      setResult(traced);
+      setSelected(traced.nodes?.[0]?.address ?? null);
       setView("report");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong.");
@@ -295,7 +310,7 @@ export default function App() {
           <div
             className="no-print"
             style={{
-              height: "70vh",
+              minHeight: "70vh",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
@@ -306,14 +321,7 @@ export default function App() {
             }}
           >
             {busy ? (
-              <>
-                <div style={{ fontSize: 16, color: "var(--ink-2)" }}>
-                  Following the money…
-                </div>
-                <div className="mono" style={{ fontSize: 11.5, color: "var(--muted)" }}>
-                  reading the chain hop by hop
-                </div>
-              </>
+              <TraceProgress events={progress} address={tracing} />
             ) : error ? (
               <div
                 style={{

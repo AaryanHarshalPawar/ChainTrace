@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -92,14 +93,23 @@ class Tracer:
         max_hops: int | None = None,
         max_nodes: int | None = None,
         transfers_per_address: int | None = None,
+        on_progress: Callable[[dict], Awaitable[None]] | None = None,
     ) -> None:
         self.adapters = adapters
         self.engine = engine
+        # Optional sink for live progress. A trace over a cold Bitcoin address
+        # takes tens of seconds, and an investigator watching a spinner cannot
+        # tell a slow search from a hung one.
+        self._on_progress = on_progress
         self.max_hops = max_hops if max_hops is not None else settings.max_trace_hops
         self.max_nodes = max_nodes or settings.max_nodes_per_trace
         self.transfers_per_address = (
             transfers_per_address or settings.max_transfers_per_address
         )
+
+    async def _emit(self, **event: object) -> None:
+        if self._on_progress is not None:
+            await self._on_progress(dict(event))
 
     async def trace(self, address: str, chain: Chain) -> TraceResult:
         started = time.monotonic()
@@ -166,6 +176,12 @@ class Tracer:
             if not level:
                 break
 
+            await self._emit(
+                type="hop",
+                depth=level[0].depth,
+                addresses=len(level),
+            )
+
             # Highest-value branches first, so a truncated trace still
             # captured the money that matters.
             level.sort(key=lambda item: item.traced_value_usd, reverse=True)
@@ -222,6 +238,14 @@ class Tracer:
 
                 stats.nodes_explored += 1
                 stats.max_depth_reached = max(stats.max_depth_reached, depth)
+                await self._emit(
+                    type="node",
+                    depth=depth,
+                    address=node_address,
+                    role=str(node.role),
+                    label=assessment.label,
+                    terminal=assessment.is_terminal,
+                )
                 stats.transfers_examined += len(outcome.kept) + outcome.flagged_count
 
                 for reason, count in outcome.reason_counts().items():

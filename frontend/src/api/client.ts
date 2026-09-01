@@ -70,6 +70,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/** One live event from a streaming trace. */
+export interface ProgressEvent {
+  type: "stage" | "hop" | "node" | "done" | "error";
+  /** stage */
+  stage?: string;
+  message?: string;
+  chain?: string;
+  /** hop + node */
+  depth?: number;
+  addresses?: number;
+  /** node */
+  address?: string;
+  role?: string;
+  label?: string | null;
+  terminal?: boolean;
+  /** done */
+  result?: TraceResult;
+}
+
 export interface HealthResponse {
   status: string;
   offline_mode: boolean;
@@ -97,6 +116,79 @@ export const api = {
       is_sanctioned: boolean;
       hits: Array<{ name: string; source: string; category: string; notes?: string | null }>;
     }>(`/screen?address=${encodeURIComponent(address)}`),
+
+  /**
+   * Trace with live progress.
+   *
+   * Reads server-sent events off the response body. Every event originates in
+   * the tracer as it works, so what the UI shows is the real state of the
+   * search rather than a timed animation.
+   */
+  traceStream: async (
+    address: string,
+    opts: { maxHops?: number; maxNodes?: number; complaintId?: string },
+    onEvent: (event: ProgressEvent) => void,
+  ): Promise<TraceResult> => {
+    let response: Response;
+    try {
+      response = await fetch(`${BASE}/trace/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address,
+          max_hops: opts.maxHops ?? 3,
+          max_nodes: opts.maxNodes ?? 40,
+          complaint_id: opts.complaintId ?? null,
+        }),
+      });
+    } catch {
+      throw new ApiError(
+        "Cannot reach the ChainTrace server. Start it in VS Code with F5, then try again.",
+        0,
+      );
+    }
+    if (!response.ok || !response.body) {
+      throw new ApiError(`Request failed (HTTP ${response.status})`, response.status);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result: TraceResult | null = null;
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Frames are separated by a blank line; the last piece may be partial.
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+
+      for (const frame of frames) {
+        const line = frame.trim();
+        if (!line.startsWith("data:")) continue;
+        let event: ProgressEvent;
+        try {
+          event = JSON.parse(line.slice(5).trim());
+        } catch {
+          continue; // a malformed frame must not kill the whole trace
+        }
+        if (event.type === "error") {
+          throw new ApiError(event.message ?? "Trace failed", 500);
+        }
+        if (event.type === "done" && event.result) {
+          result = event.result;
+        }
+        onEvent(event);
+      }
+    }
+
+    if (!result) {
+      throw new ApiError("The trace ended without returning a result.", 500);
+    }
+    return result;
+  },
 
   trace: (address: string, opts?: { maxHops?: number; maxNodes?: number; complaintId?: string }) =>
     request<{ complaint_id: string | null; result: TraceResult }>("/trace", {

@@ -10,6 +10,7 @@ victim actually meant.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from app.attribution.engine import AttributionEngine
@@ -114,12 +115,30 @@ class TraceService:
         *,
         max_hops: int | None = None,
         max_nodes: int | None = None,
+        on_progress: Callable[[dict], Awaitable[None]] | None = None,
     ) -> TraceResult:
+        async def emit(event: dict) -> None:
+            if on_progress is not None:
+                await on_progress(event)
+
+        await emit({"type": "stage", "stage": "resolve",
+                    "message": "Checking the address and identifying its blockchain"})
         resolved = await self.resolve(raw_address)
+        await emit({"type": "stage", "stage": "resolved",
+                    "message": f"Recognised as {resolved.chain.value}",
+                    "chain": resolved.chain.value})
+
         tracer = Tracer(
-            self.adapters, self.engine, max_hops=max_hops, max_nodes=max_nodes
+            self.adapters,
+            self.engine,
+            max_hops=max_hops,
+            max_nodes=max_nodes,
+            on_progress=on_progress,
         )
         result = await tracer.trace(resolved.address, resolved.chain)
+
+        await emit({"type": "stage", "stage": "scoring",
+                    "message": "Attributing wallets and scoring risk"})
         if resolved.probe_note:
             result.warnings.append(resolved.probe_note)
 
