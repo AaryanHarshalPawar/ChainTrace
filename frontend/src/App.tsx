@@ -265,6 +265,15 @@ export default function App() {
           ))}
           <button
             onClick={() => window.print()}
+            // Windows defaults some machines to the XPS Document Writer, which
+            // silently saves .oxps instead of a PDF and looks like a broken
+            // export. Naming the destination on the control is cheaper than
+            // discovering it mid-presentation.
+            title={
+              "In the print dialog set Destination to 'Save as PDF' " +
+              "(not 'Microsoft XPS Document Writer'), and turn on " +
+              "'Background graphics' so the risk banners print."
+            }
             style={{
               marginLeft: "auto",
               padding: "6px 14px",
@@ -275,7 +284,7 @@ export default function App() {
               color: "var(--ink-2)",
             }}
           >
-            Print / save as PDF
+            Save as PDF
           </button>
         </div>
       )}
