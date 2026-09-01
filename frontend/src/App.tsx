@@ -13,10 +13,31 @@ import { FlowGraph } from "./components/FlowGraph";
 import { Report } from "./components/Report";
 import { NodeInspector } from "./components/Panels";
 
+// Chosen by tracing candidates and keeping the ones that actually produce a
+// finding worth reading. Each shows a different outcome, so a demo can move
+// between them without repeating itself. All are pre-cached, so they return in
+// well under a second and work with the network unplugged.
 const EXAMPLES = [
-  { label: "TRON · layered sweep", address: "TMuA6YqfCeX8EhbfYEg5y7S4DqzSJireY9" },
-  { label: "Bitcoin · fan-out", address: "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy" },
-  { label: "OFAC sanctioned", address: "12aNKp2iDKuhEde2YfPdd4DFGenRUTKupL" },
+  {
+    label: "Sanctions hit",
+    address: "32pTjxTNi7snk8sodrgfmdKao3DEn1nVJM",
+    note: "CRITICAL · OFAC-designated individual, $4.12m from 27 payers",
+  },
+  {
+    label: "Layered · 52 edges",
+    address: "37cGxZ3EcZ7JSyTwzBbmw5JJCRkKm1ysea",
+    note: "HIGH · exchange reached at hop 2, taint diluted to 8.4%",
+  },
+  {
+    label: "Deposit address found",
+    address: "bc1qgvzl4wklayt4dnmzugcwcern5ceyg4h5j4tm83",
+    note: "MEDIUM · sweep into a VASP at hop 1",
+  },
+  {
+    label: "TRON · single chain",
+    address: "TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
+    note: "98.7% taint carried undiluted to an exchange wallet",
+  },
 ];
 
 type View = "report" | "graph";
@@ -199,6 +220,7 @@ export default function App() {
               runTrace(ex.address);
             }}
             disabled={busy}
+            title={ex.note}
             style={{
               padding: "5px 11px",
               fontSize: 11.5,
