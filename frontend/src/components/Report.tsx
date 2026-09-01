@@ -154,7 +154,7 @@ function TracePath({ result }: { result: TraceResult }) {
                 className="mono"
                 style={{ fontSize: 11, marginTop: 2, color: style.border, fontWeight: 500 }}
               >
-                {percent(node.taint_ratio)} taint
+                {node.depth === 0 ? "origin" : `${percent(node.taint_ratio)} taint`}
               </div>
             </div>
 
@@ -185,6 +185,11 @@ export function Report({ result, caseId }: Props) {
 
   const evidenceHashes = primary?.evidence_tx_hashes ?? [];
   const filtered = Object.entries(result.filtered_summary ?? {});
+
+  // When the attribution sits at hop 0 the reported address *is* the entity,
+  // so taint is 100% by definition and measures nothing. Printing it as a
+  // headline reads like a strong claim when it is an empty one.
+  const selfAttributed = primary?.hops_from_subject === 0;
 
   return (
     <article
@@ -265,10 +270,22 @@ export function Report({ result, caseId }: Props) {
             k: "Traced value",
             v: usd(primary?.value_usd ?? subject?.value_in_usd),
           },
-          { k: "Taint to VASP", v: percent(primary?.taint_ratio) },
+          // Swapped for a figure that carries information when taint cannot.
+          selfAttributed
+            ? {
+                k: "Paid in by",
+                v: subject?.profile
+                  ? `${subject.profile.unique_senders}${subject.profile.is_truncated ? "+" : ""}`
+                  : "—",
+              }
+            : { k: "Taint reaching VASP", v: percent(primary?.taint_ratio) },
           {
             k: "Hops to VASP",
-            v: primary ? String(primary.hops_from_subject) : "—",
+            v: !primary
+              ? "—"
+              : primary.hops_from_subject === 0
+                ? "0 · direct"
+                : String(primary.hops_from_subject),
           },
           {
             k: "Addresses traced",
@@ -346,12 +363,25 @@ export function Report({ result, caseId }: Props) {
               }}
             >
               <div style={{ fontSize: 14, lineHeight: 1.6 }}>
-                Funds from the reported address reach{" "}
-                <strong>{primary.vasp_name}</strong> after{" "}
-                <strong>{primary.hops_from_subject}</strong> hop
-                {primary.hops_from_subject === 1 ? "" : "s"}, carrying{" "}
-                <strong>{percent(primary.taint_ratio)}</strong> of the value that
-                left the wallet.
+                {selfAttributed ? (
+                  <>
+                    The reported address is itself identified as{" "}
+                    <strong>{primary.vasp_name}</strong>
+                    {primary.category === "sanctioned"
+                      ? ", an entity designated on the OFAC sanctions list."
+                      : "."}{" "}
+                    No onward tracing was required to reach this finding.
+                  </>
+                ) : (
+                  <>
+                    Funds from the reported address reach{" "}
+                    <strong>{primary.vasp_name}</strong> after{" "}
+                    <strong>{primary.hops_from_subject}</strong> hop
+                    {primary.hops_from_subject === 1 ? "" : "s"}, carrying{" "}
+                    <strong>{percent(primary.taint_ratio)}</strong> of the value
+                    that left the wallet.
+                  </>
+                )}
               </div>
             </div>
 
@@ -393,31 +423,60 @@ export function Report({ result, caseId }: Props) {
 
             <Field label="Attribution method" value={methodLabel(primary.method)} />
             <Field label="Confidence" value={percent(primary.confidence)} />
+            {!selfAttributed && (
+              <Field
+                label="Exchange hot wallet"
+                value={<span className="mono">{primary.matched_address}</span>}
+              />
+            )}
+            {!selfAttributed && (
+              <Field
+                label="Taint reaching VASP"
+                value={`${percent(primary.taint_ratio)} of the value that left the reported address`}
+              />
+            )}
             <Field
-              label="Exchange hot wallet"
-              value={<span className="mono">{primary.matched_address}</span>}
+              label={selfAttributed ? "Value received" : "Value reaching VASP"}
+              value={usd(primary.value_usd)}
             />
-            <Field label="Value reaching VASP" value={usd(primary.value_usd)} />
-            <Field
-              label="First deposit"
-              value={whenWithAge(primary.first_deposit_at)}
-            />
-            <Field
-              label="Most recent deposit"
-              value={whenWithAge(primary.last_deposit_at)}
-            />
-            <Field
-              label="Jurisdiction"
-              value={primary.jurisdiction ?? "not established"}
-            />
-            <Field
-              label="FIU-IND registration"
-              value={
-                primary.fiu_ind_registered
-                  ? "Registered — an Indian LEA may serve notice directly"
-                  : "Not confirmed — verify before serving; otherwise route via MLAT or SAHYOG"
-              }
-            />
+            {/* Deposit timing describes funds arriving at a VASP along a
+                traced path. With no onward hop there is no such event, and
+                printing "not established" twice implies a gap in the data
+                rather than a question that does not arise. */}
+            {!selfAttributed && (
+              <>
+                <Field
+                  label="First deposit"
+                  value={whenWithAge(primary.first_deposit_at)}
+                />
+                <Field
+                  label="Most recent deposit"
+                  value={whenWithAge(primary.last_deposit_at)}
+                />
+              </>
+            )}
+            {primary.jurisdiction && (
+              <Field label="Jurisdiction" value={primary.jurisdiction} />
+            )}
+            {/* FIU-IND is a register of virtual-asset businesses. Asking
+                whether a sanctioned individual is registered on it is a
+                category error, and an officer reading it would rightly
+                distrust the rest of the page. */}
+            {primary.category === "sanctioned" ? (
+              <Field
+                label="Legal posture"
+                value="OFAC-designated. This is a sanctions matter before it is a recovery matter — escalate to the FIU-IND desk rather than serving a preservation request."
+              />
+            ) : (
+              <Field
+                label="FIU-IND registration"
+                value={
+                  primary.fiu_ind_registered
+                    ? "Registered — an Indian LEA may serve notice directly"
+                    : "Not confirmed — verify before serving; otherwise route via MLAT or SAHYOG"
+                }
+              />
+            )}
 
             {(primary.reasoning?.length ?? 0) > 0 && (
               <div style={{ marginTop: 14 }}>
